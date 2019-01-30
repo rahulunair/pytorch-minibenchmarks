@@ -8,16 +8,20 @@ import subprocess
 import time
 from collections import namedtuple
 
-import psutil
 import torch
 import torch.nn as nn
 import torchvision.models as models
 import torch.optim as optim
+import multiprocessing as mps
 
 logging.basicConfig(
     level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
+# env variables to tune performance
+os.environ["OMP_NUM_THREADS"] = str(int(mps.cpu_count() / 2))
+os.environ["KMP_BLOCKTIME"] = "0"
+os.environ["KMP_AFFINITY"] = "granularity=fine,verbose,compact,1,0"
 
 logging.info("Platform details")
 logging.info("=" * 71)
@@ -31,6 +35,10 @@ if platform.system() == "Linux":
         ).split(":")[1][:-3]
     )
     logging.info("operating system :: %s" % platform.platform())
+    logging.info("processor count :: %d" % mps.cpu_count())
+    logging.info("OMP_NUM_THREADS :: %s" % os.environ["OMP_NUM_THREADS"])
+    logging.info("KMP BLOCKTIME :: %s" % os.environ["KMP_BLOCKTIME"])
+    logging.info("KMP_AFFINITY :: %s" % os.environ["KMP_AFFINITY"])
     logging.info("=" * 71)
     logging.info("Pytorch config")
     logging.info("=" * 71)
@@ -90,12 +98,13 @@ class BenchMarks:
         label = torch.arange(1, batch_size + 1).long()
         return inp_data, label
 
-    def main(self, models):
-        self.select(models)
-        for m in self.models:
-            logging.info("=" * 71)
-            logging.info("Running an instance of :: %s" % m.name)
-            self.run(m)
+    def main(self, models, dry_run=True):
+        if not dry_run:
+            self.select(models)
+            for m in self.models:
+                logging.info("=" * 71)
+                logging.info("Running an instance of :: %s" % m.name)
+                self.run(m)
 
     def run(self, model_tuple):
         t_forward, t_backward, t_update = 0, 0, 0
@@ -141,4 +150,5 @@ class BenchMarks:
 
 if __name__ == "__main__":
     bmarks = BenchMarks()
-    bmarks.main(models=["alexnet", "resnet18", "resnet50"])
+    models = ["alexnet", "resnet18"]
+    bmarks.main(models, dry_run=False)
