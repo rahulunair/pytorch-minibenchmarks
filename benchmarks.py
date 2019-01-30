@@ -1,58 +1,19 @@
 #!/usr/bin/env python
 """mini cnn benchmarks in pytorch to identify regression issues"""
 
+import argparse
+from collections import namedtuple
 import logging
+import multiprocessing as mps
 import os
 import platform
 import subprocess
 import time
-from collections import namedtuple
 
 import torch
-import torch.nn as nn
 import torchvision.models as models
+import torch.nn as nn
 import torch.optim as optim
-import multiprocessing as mps
-
-logging.basicConfig(
-    level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s"
-)
-
-# env variables to tune performance
-os.environ["OMP_NUM_THREADS"] = str(int(mps.cpu_count() / 2))
-os.environ["KMP_BLOCKTIME"] = "0"
-os.environ["KMP_AFFINITY"] = "granularity=fine,verbose,compact,1,0"
-
-logging.info("Platform details")
-logging.info("=" * 71)
-if platform.system() == "Linux":
-    logging.info(
-        "cpu name :: %s"
-        % str(
-            subprocess.check_output(
-                "cat /proc/cpuinfo | grep 'model name' | head -n 1", shell=True
-            )
-        ).split(":")[1][:-3]
-    )
-    logging.info("operating system :: %s" % platform.platform())
-    logging.info("processor count :: %d" % mps.cpu_count())
-    logging.info("OMP_NUM_THREADS :: %s" % os.environ["OMP_NUM_THREADS"])
-    logging.info("KMP BLOCKTIME :: %s" % os.environ["KMP_BLOCKTIME"])
-    logging.info("KMP_AFFINITY :: %s" % os.environ["KMP_AFFINITY"])
-    logging.info("=" * 71)
-    logging.info("Pytorch config")
-    logging.info("=" * 71)
-    logging.info("pytorch version :: %s" % torch.__version__)
-    logging.info("mkl available :: %s" % "Yes" if torch.has_lapack else "No")
-    logging.info("lapack available :: %s" % "Yes" if torch.has_mkl else "No")
-    mkldnn = os.path.isfile(
-        os.path.join(torch.get_file_path(), "torch", "lib", "libmkldnn.so")
-    )
-    logging.info("mkldnn available :: %s" % "Yes" if mkldnn else "No")
-    logging.info("=" * 71)
-else:
-    logging.info("Exiting... not a linux system")
-    exit(1)
 
 
 class BenchMarks:
@@ -69,7 +30,6 @@ class BenchMarks:
 
     def select(self, model_name=None):
         """select models to be run"""
-
         logging.info("Run details")
         logging.info("=" * 71)
         models = [
@@ -101,12 +61,15 @@ class BenchMarks:
     def main(self, models, dry_run=True):
         if not dry_run:
             self.select(models)
+            if not self.models:
+                logging.info("Requested model(s) not available")
             for m in self.models:
                 logging.info("=" * 71)
                 logging.info("Running an instance of :: %s" % m.name)
                 self.run(m)
 
     def run(self, model_tuple):
+        """Run each model `step` times"""
         t_forward, t_backward, t_update = 0, 0, 0
         steps = 10
         model, batch = model_tuple.model(), model_tuple.batch
@@ -148,7 +111,85 @@ class BenchMarks:
         logging.info("=" * 71)
 
 
+def set_env_vars():
+    """env variables to tune performance"""
+    os.environ["OMP_NUM_THREADS"] = str(int(mps.cpu_count() / 2))
+    os.environ["KMP_BLOCKTIME"] = "0"
+    os.environ["KMP_AFFINITY"] = "granularity=fine,verbose,compact,1,0"
+
+
+def print_config_details():
+    """details about the platform, and the stack"""
+    logging.info("Platform details")
+    logging.info("=" * 71)
+    logging.info(
+        "cpu name :: %s"
+        % str(
+            subprocess.check_output(
+                "cat /proc/cpuinfo | grep 'model name' | head -n 1", shell=True
+            )
+        ).split(":")[1][:-3]
+    )
+    logging.info("operating system :: %s" % platform.platform())
+    logging.info("processor count :: %d" % mps.cpu_count())
+    logging.info("OMP_NUM_THREADS :: %s" % os.environ["OMP_NUM_THREADS"])
+    logging.info("KMP BLOCKTIME :: %s" % os.environ["KMP_BLOCKTIME"])
+    logging.info("KMP_AFFINITY :: %s" % os.environ["KMP_AFFINITY"])
+    logging.info("=" * 71)
+    logging.info("Pytorch config")
+    logging.info("=" * 71)
+    logging.info("pytorch version :: %s" % torch.__version__)
+    logging.info("mkl available :: %s" % "Yes" if torch.has_lapack else "No")
+    logging.info("lapack available :: %s" % "Yes" if torch.has_mkl else "No")
+    mkldnn = os.path.isfile(
+        os.path.join(torch.get_file_path(), "torch", "lib", "libmkldnn.so")
+    )
+    logging.info("mkldnn available :: %s" % "Yes" if mkldnn else "No")
+    logging.info("=" * 71)
+
+
+def config_parser():
+    """cli and logger definitions"""
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "-o",
+        "--log_to_file",
+        help="log output to file",
+        action="store_true",
+        default=False,
+    )
+    parser.add_argument(
+        "-d",
+        "--dry_run",
+        help="Don't run the actual models",
+        action="store_true",
+        default=False,
+    )
+    parser.add_argument(
+        "-m", "--models", help="input models as a comma sep list", type=str, nargs="*"
+    )
+    args = parser.parse_args()
+    if args.log_to_file:
+        logging.basicConfig(
+            filename="benchmark.log",
+            filemode="a",
+            level=logging.DEBUG,
+            format="%(asctime)s - %(levelname)s - %(message)s",
+        )
+    else:
+        logging.basicConfig(
+            level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s"
+        )
+    return args
+
+
 if __name__ == "__main__":
+    args = config_parser()
+    if platform.system() != "Linux":
+        logging.info("Exiting... not a linux system")
+        exit(1)
+    set_env_vars()
+    print_config_details()
     bmarks = BenchMarks()
-    models = ["alexnet", "resnet18"]
-    bmarks.main(models, dry_run=False)
+    models = args.models if args.models else ["alexnet", "resnet18"]
+    bmarks.main(models, dry_run=args.dry_run)
